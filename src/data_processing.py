@@ -8,11 +8,52 @@ class DataProcessing:
     def __init__(self, 
                  data_dir: os.PathLike = os.path.join(os.path.pardir, 'data'),
                  floating_dtype: np.dtype | str = np.float32) -> None:
+        self._data_frame = None
         self._data_dir = data_dir
         self._floating_dtype = floating_dtype
         self._feature_dict = {}
         self._target_dict = {}
         self._internal_sample_count = 0
+        self._ind_to_col = {
+            0 : "Experiment",
+            1 : "Sample number",
+            2 : "Protein",
+            3 : "Batch",
+            4 : "Date Purified",
+            5 : "column",
+            6 : "Dope prepared",
+            7 : "concentration (mg/ml)",
+            8 : "Spinning device",
+            9 : "Extrusion device",
+            10 : "spinning",
+            11 : "Bath length (cm)",
+            12 : "Temperature SB",
+            13 : "Spinning Buffer",
+            14 : "SB pH",
+            15 : "SB conc. (mM)",
+            16 : "NaCl (mM)",
+            17 : "Capillery size (um)",
+            18 : "Reeling speed (rpm)",
+            19 : "Flow rate (ul/min)",
+            20 : "pumppressure (bar)",
+            21 : "Post spin treatment",
+            22 : "Temp C (spinning)",
+            23 : "Humidity (spinning)",
+            24 : "Continous spinning",
+            25 : "Comment",
+            26 : "fibers prepared",
+            27 : "mechanical testing date",
+            28 : "# fibers",
+            29 : "Diameter (µm)",
+            30 : "strain (mm/mm)",
+            31 : "strength (MPa)",
+            32 : "Youngs Modulus (Gpa)",
+            33 : "Toughness (MJ m-3)",
+            34 : "Water Soluble (10 min after spin)",
+            35 : "Water Soluble (>7 days after spin)",
+            36 : "Temp C (tensile test)",
+            37 : "Humidity (tensile test)"}
+        self._col_to_ind = {v: k for k, v in self._ind_to_col.items()}
 
     @property
     def feature_dict(self) -> dict[str, np.ndarray[any]]:
@@ -22,6 +63,9 @@ class DataProcessing:
     def target_dict(self) -> dict[str, np.ndarray[np.dtype]]:
         return self._target_dict
 
+    def create_dataframe():
+        pass
+
     def get_dataset(self) -> tuple[np.ndarray[np.ndarray], np.ndarray[np.dtype]]:
         samples = set(self._feature_dict.keys()).intersection(set(self._target_dict))
         for sample in samples:
@@ -30,21 +74,22 @@ class DataProcessing:
 
     def load_spinning_data_excel(self,
                             fname: os.PathLike = 'Spinning experiments overview.xlsx') -> None:
+        sample_ind = 1
+        feature_inds = [2,7,8,9,11,12,13,14,15,16,17,18,19,20,22,23,24,28,34]
+        target_inds = [29,30,31,32,33]
+        inds = [sample_ind] + feature_inds + target_inds
+
         fp = os.path.join(self._data_dir, fname)
-        df = pd.read_excel(fp)
+        df = pd.read_excel(fp, usecols=inds, skiprows=1)
 
         inds_to_cols = list(df.iloc[1])
         cols_to_inds = {}
         for col_name in inds_to_cols:
             cols_to_inds[col_name] = inds_to_cols.index(col_name)
 
-        sample_ind = 1
-        feature_inds = [2,7,8,9,11,12,13,14,15,16,17,18,19,20,22,23,24,28,34]
-        target_inds = [29,30,31,32,33]
-
-        samples = df.iloc[2:, sample_ind]
-        features = df.iloc[2:, feature_inds]
-        targets = df.iloc[2:, target_inds]
+        samples = df.iloc[:, sample_ind]
+        features = df.iloc[:, feature_inds]
+        targets = df.iloc[:, target_inds]
 
         for i, sample in enumerate(samples):
             invalid_sample = not type(sample) is float or sample.isnull()
