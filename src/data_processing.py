@@ -12,6 +12,7 @@ class DataProcessing:
         self._floating_dtype = floating_dtype
         self._feature_dict = {}
         self._target_dict = {}
+        self._internal_sample_count = 0
 
     @property
     def feature_dict(self) -> dict[str, np.ndarray[any]]:
@@ -37,17 +38,26 @@ class DataProcessing:
         for col_name in inds_to_cols:
             cols_to_inds[col_name] = inds_to_cols.index(col_name)
 
+        sample_ind = 1
         feature_inds = [2,7,8,9,11,12,13,14,15,16,17,18,19,20,22,23,24,28,34]
         target_inds = [29,30,31,32,33]
 
-        samples = df.iloc[1]
-        features = df.iloc[feature_inds]
-        targets = df.iloc[target_inds]
+        samples = df.iloc[2:, sample_ind]
+        features = df.iloc[2:, feature_inds]
+        targets = df.iloc[2:, target_inds]
 
         for i, sample in enumerate(samples):
-            if sample == np.nan:
+            invalid_sample = not type(sample) is float or sample.isnull()
+            invalid_target = targets.iloc[i].isnull().all()
+            if invalid_sample and invalid_target:
+                print(f'{sample}, {type(sample) is float}')
                 continue
-            self.feature_dict[]
+            if invalid_sample:
+                self._internal_sample_count += 1
+                sample = f'internal_{self._internal_sample_count}'
+            if not invalid_target:
+                self.target_dict[sample] = targets.iloc[i]
+            self.feature_dict[sample] = features.iloc[i]
         
     def load_targets(self) -> None:
         hdf5_fp = os.path.join(self._data_dir, 'targets.hf5')
