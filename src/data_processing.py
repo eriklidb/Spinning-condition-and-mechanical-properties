@@ -8,11 +8,10 @@ class DataProcessing:
     def __init__(self, 
                  data_dir: os.PathLike = os.path.join(os.path.pardir, 'data'),
                  floating_dtype: np.dtype | str = np.float32) -> None:
-        self._data_frame = None
+        self._df = None
+        self._targets_df = pd.DataFrame(columns=['Sample number', 'Diameter (µm)', 'strain (mm/mm)', 'strength (MPa)', 'Youngs Modulus (Gpa)', 'Toughness (MJ m-3)'])
         self._data_dir = data_dir
         self._floating_dtype = floating_dtype
-        self._feature_dict = {}
-        self._target_dict = {}
         self._internal_sample_count = 0
         self._ind_to_col = {
             0 : "Experiment",
@@ -75,7 +74,7 @@ class DataProcessing:
     def load_spinning_data_excel(self,
                             fname: os.PathLike = 'Spinning experiments overview.xlsx') -> None:
         sample_ind = 1
-        feature_inds = [2,7,8,9,11,12,13,14,15,16,17,18,19,20,22,23,24,28,34]
+        feature_inds = [2,7,8,9,11,12,13,14,15,16,17,18,19,20,22,23,24,28,34,37]
         target_inds = [29,30,31,32,33]
         inds = [sample_ind] + feature_inds + target_inds
 
@@ -87,9 +86,9 @@ class DataProcessing:
         for col_name in inds_to_cols:
             cols_to_inds[col_name] = inds_to_cols.index(col_name)
 
-        samples = df.iloc[:, sample_ind]
-        features = df.iloc[:, feature_inds]
-        targets = df.iloc[:, target_inds]
+        samples = df.iloc[:, 0]
+        features = df.iloc[:, 1:-5]
+        targets = df.iloc[:, -5:]
 
         for i, sample in enumerate(samples):
             invalid_sample = not type(sample) is float or sample.isnull()
@@ -115,17 +114,9 @@ class DataProcessing:
     def load_targets_excel(self) -> None:
         pbar = tqdm(os.listdir(self._data_dir))
         for fname in pbar:
-            '''
-            # Strip "benjamin" from some of the filenames.
-            if fname.split()[1].lower() == 'benjamin':
-                sample = fname.split()[2].split(r'.')[0]
-            else:
-                sample = fname.split()[1].split(r'.')[0]
-            '''
-
             # Ignore all unsuitable files or file is already processed.
-            sample = fname[4:].strip()
-            if not (fname.endswith(r'.xlsx') and 'all' in fname.lower()) or sample in self._target_dict.keys():
+            sample = fname[4:-5].strip()
+            if not (fname.endswith(r'.xlsx') and 'all' in fname.lower()) or sample in self._targets_df['Sample number'].values:
                 continue
             pbar.set_description(f'Processing file "{fname}"')
             fp = os.path.join(self._data_dir, fname)
@@ -156,15 +147,14 @@ class DataProcessing:
             if np.isnan(data).any():
                 data = df.iloc[0:9, i:i+5].to_numpy(self._floating_dtype)
             assert(not np.isnan(data).any())
-            self._target_dict[sample] = data
+            rows = pd.DataFrame(data, columns=self._targets_df.columns[1:])
+            rows.insert(0, 'Sample number', sample)
+            self._targets_df = rows.copy() if self._targets_df.empty else pd.concat([self._targets_df, rows], ignore_index=True)
 
     def save_targets_hdf5(self, fname: os.PathLike = 'targets.hf5') -> None: 
         fp = os.path.join(self._data_dir, fname)
-        with h5py.File(fp, "w") as hf:
-            for sample, data in self._target_dict.items():
-                hf.create_dataset(sample, data=data)
+        self._targets_df.to_hdf(fp, key='targets', mode='w')
 
     def load_targets_hdf5(self, fname: os.PathLike = 'targets.hf5') -> None: 
         fp = os.path.join(self._data_dir, fname)
-        with h5py.File(fp, "r") as hf:
-            self._target_dict = {sample: np.array(hf[sample]) for sample in hf.keys()}
+        self._targets_df = pd.read_hdf(fp)
