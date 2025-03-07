@@ -1,14 +1,13 @@
 import numpy as np
 import os
 import pandas as pd
-import h5py
 from tqdm import tqdm
 
 class DataProcessing:
     def __init__(self, 
                  data_dir: os.PathLike = os.path.join(os.path.pardir, 'data'),
                  floating_dtype: np.dtype | str = np.float32) -> None:
-        self._df = None
+        self._df: pd.DataFrame = pd.DataFrame()
         self._targets_df = pd.DataFrame(columns=['Sample number', 'Diameter (µm)', 'strain (mm/mm)', 'strength (MPa)', 'Youngs Modulus (Gpa)', 'Toughness (MJ m-3)'])
         self._data_dir = data_dir
         self._floating_dtype = floating_dtype
@@ -55,53 +54,36 @@ class DataProcessing:
         self._col_to_ind = {v: k for k, v in self._ind_to_col.items()}
 
     @property
-    def feature_dict(self) -> dict[str, np.ndarray[any]]:
-        return self._feature_dict
+    def df(self) -> pd.DataFrame:
+        return self._df
 
-    @property
-    def target_dict(self) -> dict[str, np.ndarray[np.dtype]]:
-        return self._target_dict
+    def save_dataset_excel(self,
+                            fname: os.PathLike = 'dataset.xlsx') -> None:
+        fp = os.path.join(self._data_dir, fname)
+        self._df.to_excel(fp)
 
-    def create_dataframe():
-        pass
-
-    def get_dataset(self) -> tuple[np.ndarray[np.ndarray], np.ndarray[np.dtype]]:
-        samples = set(self._feature_dict.keys()).intersection(set(self._target_dict))
-        for sample in samples:
-            feature = self._feature_dict[sample]
-            target = self._target_dict[sample]
-
-    def load_spinning_data_excel(self,
+    def load_spinning_experiments_excel(self,
                             fname: os.PathLike = 'Spinning experiments overview.xlsx') -> None:
         sample_ind = 1
-        feature_inds = [2,7,8,9,11,12,13,14,15,16,17,18,19,20,22,23,24,28,34,37]
+        feature_inds = [2,7,8,9,11,12,13,14,15,16,17,18,19,20,22,23,24,28]
         target_inds = [29,30,31,32,33]
         inds = [sample_ind] + feature_inds + target_inds
 
         fp = os.path.join(self._data_dir, fname)
-        df = pd.read_excel(fp, usecols=inds, skiprows=1)
+        self._df = pd.read_excel(fp, usecols=inds, skiprows=2)
 
-        inds_to_cols = list(df.iloc[1])
-        cols_to_inds = {}
-        for col_name in inds_to_cols:
-            cols_to_inds[col_name] = inds_to_cols.index(col_name)
+        self._sample_column = self._df.columns[0]
+        self._features_columns = self._df.columns[1:-5]
+        self._targets_columns = self._df.columns[-5:]
 
-        samples = df.iloc[:, 0]
-        features = df.iloc[:, 1:-5]
-        targets = df.iloc[:, -5:]
-
-        for i, sample in enumerate(samples):
-            invalid_sample = not type(sample) is float or sample.isnull()
-            invalid_target = targets.iloc[i].isnull().all()
-            if invalid_sample and invalid_target:
-                print(f'{sample}, {type(sample) is float}')
-                continue
-            if invalid_sample:
-                self._internal_sample_count += 1
-                sample = f'internal_{self._internal_sample_count}'
-            if not invalid_target:
-                self.target_dict[sample] = targets.iloc[i]
-            self.feature_dict[sample] = features.iloc[i]
+    def drop_missing_targets(self, 
+                    allow_partially_missing_targets: bool = False) -> None:
+        if allow_partially_missing_targets:
+            cond = self._df[self._targets_columns].isnull().all(axis=1)
+        else:
+            cond = self._df[self._targets_columns].isnull().any(axis=1)
+        cond &= self._df[self._sample_column].isnull() 
+        self._df = self._df.drop(self._df[cond].index).reset_index(drop=True)
         
     def load_targets(self) -> None:
         hdf5_fp = os.path.join(self._data_dir, 'targets.hf5')
@@ -158,3 +140,15 @@ class DataProcessing:
     def load_targets_hdf5(self, fname: os.PathLike = 'targets.hf5') -> None: 
         fp = os.path.join(self._data_dir, fname)
         self._targets_df = pd.read_hdf(fp)
+
+    def merge_targets(self):
+        self._targets = pd.concat([self._targets_df, self._df[[self._sample_column] + list(self._targets_columns)]]) \
+            .drop(self._targets_df[self._targets_df[self._sample_column].isnull()].index).reset_index(drop=True)
+        self._df = self._df.drop(self._targets_columns, axis=1) \
+            .merge(self._targets_df, 'left', self._sample_column)
+
+    def __str__(self):
+        return str(self._df)
+
+    def __repr__(self):
+        return repr(self._df)
