@@ -72,26 +72,30 @@ class DataProcessing:
         fp = os.path.join(self._data_dir, fname)
         self._df = pd.read_excel(fp, usecols=inds, skiprows=2)
 
+        # Convert all numbers (excepts na's) to strings.
+        non_na_inds = self._df['Sample number'][self._df['Sample number'].notna()].index
+        self._df.loc[non_na_inds, 'Sample number'] = self._df.loc[non_na_inds, 'Sample number'].astype(str)
+
         self._sample_column = self._df.columns[0]
         self._features_columns = self._df.columns[1:-5]
         self._targets_columns = self._df.columns[-5:]
         
         self.label_unnamed_samples()
-        assert(self._df['Sample number'].notnull().all())
+        assert(self._df['Sample number'].notna().all())
 
     def label_unnamed_samples(self) -> None:
-        for i, isnull in enumerate(self._df['Sample number'].isnull()):
-            if isnull:
+        for i, isna in enumerate(self._df['Sample number'].isna()):
+            if isna:
                 self._df.loc[i, 'Sample number'] = f'unnamed_{self._unnamed_sample_count}'
                 self._unnamed_sample_count += 1
 
     def drop_missing_targets(self, 
                     allow_partially_missing_targets: bool = False) -> None:
         if allow_partially_missing_targets:
-            cond = self._df[self._targets_columns].isnull().all(axis=1)
+            cond = self._df[self._targets_columns].isna().all(axis=1)
         else:
-            cond = self._df[self._targets_columns].isnull().any(axis=1)
-        cond &= self._df[self._sample_column].isnull() 
+            cond = self._df[self._targets_columns].isna().any(axis=1)
+        cond &= self._df[self._sample_column].isna() 
         self._df = self._df.drop(self._df[cond].index).reset_index(drop=True)
         
     def load_targets(self) -> None:
@@ -134,10 +138,10 @@ class DataProcessing:
                         i = df.columns.get_loc('diameter ')
 
             # Some samples have 9 measurements instead of 10.
-            data = df.iloc[0:10, i:i+5].to_numpy(self._floating_dtype)
-            if np.isnan(data).any():
-                data = df.iloc[0:9, i:i+5].to_numpy(self._floating_dtype)
-            assert(not np.isnan(data).any())
+            data = df.iloc[0:10, i:i+5]
+            if data.isna().any(axis=None):
+                data = df.iloc[0:9, i:i+5]
+            assert(data.notna().all(axis=None))
             rows = pd.DataFrame(data, columns=self._targets_df.columns[1:])
             rows.insert(0, 'Sample number', sample)
             self._targets_df = rows.copy() if self._targets_df.empty else pd.concat([self._targets_df, rows], ignore_index=True)
@@ -153,20 +157,21 @@ class DataProcessing:
     def merge_targets(self):
         # Add all non-nan targets from the spinning data to the target dataframe.
         t = self._df[[self._sample_column] + list(self._targets_columns)]
-        t = t.drop(t[t.isnull().any(axis=1)].index)
-        self._targets_df = pd.concat([self._targets_df, t]) 
-        assert(self._targets_df.notnull().any(axis=None))
+        t = t.drop(t[t.isna().any(axis=1)].index)
+        self._targets_df = pd.concat([self._targets_df, t], ignore_index=True) 
+        assert(self._targets_df.notna().any(axis=None))
         self._df = self._df.drop(self._targets_columns, axis=1) \
             .merge(self._targets_df, 'left')
 
-    def drop_null_targets(self):
-        self._df = self._df[self._df[self._targets_columns].notnull().any(axis=1)]
+    def drop_na_targets(self):
+        self._df = self._df[self._df[self._targets_columns].notna().any(axis=1)]
 
     def to_excel(self, 
                   aggrigate_samples: bool = False,
                   fname: os.PathLike = 'spinning_data.xlsx') -> None:
         if aggrigate_samples:
-            pass
+            df = self._df.copy()
+
         else:
             fp = os.path.join(self._data_dir, fname)
             self._df.to_excel(fp, 'data')
