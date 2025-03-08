@@ -11,7 +11,7 @@ class DataProcessing:
         self._targets_df = pd.DataFrame(columns=['Sample number', 'Diameter (µm)', 'strain (mm/mm)', 'strength (MPa)', 'Youngs Modulus (Gpa)', 'Toughness (MJ m-3)'])
         self._data_dir = data_dir
         self._floating_dtype = floating_dtype
-        self._internal_sample_count = 0
+        self._unnamed_sample_count = 0
         self._ind_to_col = {
             0 : "Experiment",
             1 : "Sample number",
@@ -75,6 +75,15 @@ class DataProcessing:
         self._sample_column = self._df.columns[0]
         self._features_columns = self._df.columns[1:-5]
         self._targets_columns = self._df.columns[-5:]
+        
+        self.label_unnamed_samples()
+        assert(self._df['Sample number'].notnull().all())
+
+    def label_unnamed_samples(self) -> None:
+        for i, isnull in enumerate(self._df['Sample number'].isnull()):
+            if isnull:
+                self._df.loc[i, 'Sample number'] = f'unnamed_{self._unnamed_sample_count}'
+                self._unnamed_sample_count += 1
 
     def drop_missing_targets(self, 
                     allow_partially_missing_targets: bool = False) -> None:
@@ -142,10 +151,25 @@ class DataProcessing:
         self._targets_df = pd.read_hdf(fp)
 
     def merge_targets(self):
-        self._targets = pd.concat([self._targets_df, self._df[[self._sample_column] + list(self._targets_columns)]]) \
-            .drop(self._targets_df[self._targets_df[self._sample_column].isnull()].index).reset_index(drop=True)
+        # Add all non-nan targets from the spinning data to the target dataframe.
+        t = self._df[[self._sample_column] + list(self._targets_columns)]
+        t = t.drop(t[t.isnull().any(axis=1)].index)
+        self._targets_df = pd.concat([self._targets_df, t]) 
+        assert(self._targets_df.notnull().any(axis=None))
         self._df = self._df.drop(self._targets_columns, axis=1) \
-            .merge(self._targets_df, 'left', self._sample_column)
+            .merge(self._targets_df, 'left')
+
+    def drop_null_targets(self):
+        self._df = self._df[self._df[self._targets_columns].notnull().any(axis=1)]
+
+    def to_excel(self, 
+                  aggrigate_samples: bool = False,
+                  fname: os.PathLike = 'spinning_data.xlsx') -> None:
+        if aggrigate_samples:
+            pass
+        else:
+            fp = os.path.join(self._data_dir, fname)
+            self._df.to_excel(fp, 'data')
 
     def __str__(self):
         return str(self._df)
