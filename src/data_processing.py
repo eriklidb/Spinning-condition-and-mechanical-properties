@@ -83,6 +83,15 @@ class DataProcessing:
         self.label_unnamed_samples()
         assert(self._df['Sample number'].notna().all())
 
+        from collections import defaultdict
+        duplicates = defaultdict(lambda: -1)
+        for i, sample in enumerate(self._df.loc[self._df['Sample number'].duplicated(False), 'Sample number']):
+            duplicates[sample] += 1
+            print(self._df.loc[i,sample])
+            self._df.loc[sample,i] = f'{sample}_{duplicates[sample]}'
+            print(self._df.loc[i,f'{sample}_{duplicates[sample]}'])
+        assert(self._df['Sample number'].is_unique)
+
     def label_unnamed_samples(self) -> None:
         for i, isna in enumerate(self._df['Sample number'].isna()):
             if isna:
@@ -162,20 +171,27 @@ class DataProcessing:
         assert(self._targets_df.notna().any(axis=None))
         self._df = self._df.drop(self._targets_columns, axis=1) \
             .merge(self._targets_df, 'left')
+        assert(self._df['Sample number'].notna().all())
+        assert(self._df['Sample number'].is_unique)
+        assert(self._df[self._targets_columns].notna().any(axis=None))
 
     def drop_na_targets(self):
         self._df = self._df[self._df[self._targets_columns].notna().any(axis=1)]
 
     def to_excel(self, 
-                  aggrigate_samples: bool = False,
+                  aggrigate_samples: bool = True,
                   fname: os.PathLike = 'spinning_data.xlsx') -> None:
         if aggrigate_samples:
-            df = self._df.copy()
-
+            function_dict = {}
+            for col in self._df[self._features_columns]:
+                function_dict[col] = 'first'
+            for col in self._df[self._targets_columns]:
+                function_dict[col] = lambda a: ','.join(map(str, a)) 
+            df = self._df.groupby(self._df['Sample number'], as_index=False).agg(function_dict)
         else:
-            fp = os.path.join(self._data_dir, fname)
-            self._df.to_excel(fp, 'data')
-
+            df = self._df
+        fp = os.path.join(self._data_dir, fname)
+        df.to_excel(fp, sheet_name='data', index=False)
     def __str__(self):
         return str(self._df)
 
