@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import pandas as pd
+from collections import defaultdict
 from tqdm import tqdm
 
 class DataProcessing:
@@ -81,22 +82,21 @@ class DataProcessing:
         self._targets_columns = self._df.columns[-5:]
         
         self.label_unnamed_samples()
-        assert(self._df['Sample number'].notna().all())
+        self.label_duplicate_samples()
 
-        from collections import defaultdict
-        duplicates = defaultdict(lambda: -1)
-        for i, sample in enumerate(self._df.loc[self._df['Sample number'].duplicated(False), 'Sample number']):
-            duplicates[sample] += 1
-            print(self._df.loc[i,sample])
-            self._df.loc[sample,i] = f'{sample}_{duplicates[sample]}'
-            print(self._df.loc[i,f'{sample}_{duplicates[sample]}'])
-        assert(self._df['Sample number'].is_unique)
-
-    def label_unnamed_samples(self) -> None:
+    def label_unnamed_samples(self, sep: str = '_') -> None:
         for i, isna in enumerate(self._df['Sample number'].isna()):
             if isna:
-                self._df.loc[i, 'Sample number'] = f'unnamed_{self._unnamed_sample_count}'
+                self._df.loc[i, 'Sample number'] = f'unnamed{sep}{self._unnamed_sample_count}'
                 self._unnamed_sample_count += 1
+        assert(self._df['Sample number'].notna().all())
+
+    def label_duplicate_samples(self, sep: str = '-') -> None:
+        duplicates = defaultdict(lambda: 0) 
+        for i, sample in self._df.loc[self._df['Sample number'].duplicated(False), 'Sample number'].items():
+            self._df.loc[i,'Sample number'] = f'{sample}{sep}{duplicates[sample]}'
+            duplicates[sample] += 1
+        assert(self._df['Sample number'].is_unique)
 
     def drop_missing_targets(self, 
                     allow_partially_missing_targets: bool = False) -> None:
@@ -108,12 +108,12 @@ class DataProcessing:
         self._df = self._df.drop(self._df[cond].index).reset_index(drop=True)
         
     def load_targets(self) -> None:
-        hdf5_fp = os.path.join(self._data_dir, 'targets.hf5')
-        if os.path.exists(hdf5_fp):
-            self.load_targets_hdf5()
+        hdf_fp = os.path.join(self._data_dir, 'targets.hf5')
+        if os.path.exists(hdf_fp):
+            self.load_targets_hdf()
         else:
             self.load_targets_excel()
-            self.save_targets_hdf5()
+            self.save_targets_hdf()
 
     def load_targets_excel(self) -> None:
         pbar = tqdm(os.listdir(self._data_dir))
@@ -155,13 +155,13 @@ class DataProcessing:
             rows.insert(0, 'Sample number', sample)
             self._targets_df = rows.copy() if self._targets_df.empty else pd.concat([self._targets_df, rows], ignore_index=True)
 
-    def save_targets_hdf5(self, fname: os.PathLike = 'targets.hf5') -> None: 
+    def save_targets_hdf(self, fname: os.PathLike = 'targets.hf5') -> None: 
         fp = os.path.join(self._data_dir, fname)
         self._targets_df.to_hdf(fp, key='targets', mode='w')
 
-    def load_targets_hdf5(self, fname: os.PathLike = 'targets.hf5') -> None: 
+    def load_targets_hdf(self, fname: os.PathLike = 'targets.hf5') -> None: 
         fp = os.path.join(self._data_dir, fname)
-        self._targets_df = pd.read_hdf(fp)
+        self._targets_df = pd.read_hdf(fp, key='targets', mode='r')
 
     def merge_targets(self):
         # Add all non-nan targets from the spinning data to the target dataframe.
@@ -172,11 +172,10 @@ class DataProcessing:
         self._df = self._df.drop(self._targets_columns, axis=1) \
             .merge(self._targets_df, 'left')
         assert(self._df['Sample number'].notna().all())
-        assert(self._df['Sample number'].is_unique)
         assert(self._df[self._targets_columns].notna().any(axis=None))
 
     def drop_na_targets(self):
-        self._df = self._df[self._df[self._targets_columns].notna().any(axis=1)]
+        self._df = self._df[self._df[self._targets_columns].notna().any(axis=1)].reset_index(drop=True)
 
     def to_excel(self, 
                   aggrigate_samples: bool = True,
@@ -192,6 +191,17 @@ class DataProcessing:
             df = self._df
         fp = os.path.join(self._data_dir, fname)
         df.to_excel(fp, sheet_name='data', index=False)
+
+    def to_hdf(self,
+               fname: os.PathLike = 'spinning_data.hf5') -> None:
+        fp = os.path.join(self._data_dir, fname)
+        self._df.to_hdf(fp, key='spinning_data', mode='w')
+
+    def read_hdf(self,
+               fname: os.PathLike = 'spinning_data.hf5') -> None:
+        fp = os.path.join(self._data_dir, fname)
+        self._df = pd.read_hdf(fp, key='spinning_data', mode='r')
+
     def __str__(self):
         return str(self._df)
 
