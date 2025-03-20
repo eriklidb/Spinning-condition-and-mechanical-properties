@@ -24,6 +24,7 @@ class DataProcessing:
         self._targets_df = pd.DataFrame(columns=['Sample number', 'Diameter (µm)', 'strain (mm/mm)', 'strength (MPa)', 'Youngs Modulus (Gpa)', 'Toughness (MJ m-3)'])
         self._data_dir = data_dir
         self._unnamed_sample_count = 0
+        self._grouped_samples = False
         self._ind_to_col = {
             0 : "Experiment",
             1 : "Sample number",
@@ -147,7 +148,7 @@ class DataProcessing:
         # Add all non-nan targets from the spinning data to the target dataframe.
         t = self._df[[self._sample_column] + list(self._targets_columns)]
         t = t.drop(t[t.isna().any(axis=1)].index)
-        self._targets_df = pd.concat([self._targets_df, t], ignore_index=True) 
+        self._targets_df = pd.concat((self._targets_df, t), ignore_index=True) 
         assert(self._targets_df.notna().any(axis=None))
         self._df = self._df.drop(self._targets_columns, axis=1) \
             .merge(self._targets_df, 'left')
@@ -166,19 +167,46 @@ class DataProcessing:
     If 'aggrigate_samples' is 'True', Identical samples are aggrigated and 
     mechanical property values are stored as a comma-separated list."""
     def to_excel(self, 
-                  aggrigate_samples: bool = True,
                   fname: os.PathLike = 'spinning_data.xlsx') -> None:
-        if aggrigate_samples:
-            function_dict = {}
-            for col in self._df[self._features_columns]:
-                function_dict[col] = 'first'
-            for col in self._df[self._targets_columns]:
-                function_dict[col] = lambda a: ','.join(map(str, a)) 
-            df = self._df.groupby(self._df['Sample number'], as_index=False).agg(function_dict)
-        else:
-            df = self._df
+        df = self._df.copy()
+        if self._grouped_samples:
+            for col in self._targets_columns:
+                df[col].apply(lambda a: str(a)[1:-1])
         fp = os.path.join(self._data_dir, fname)
         df.to_excel(fp, sheet_name='data', index=False)
+
+    '''
+    Collect data points with identical sample number to one data point, stored as a list.
+    '''
+    def group_samples(self) -> None:
+        if self._grouped_samples:
+            return
+        function_dict = {}
+        for col in self._df[self._features_columns]:
+            function_dict[col] = 'first'
+        for col in self._df[self._targets_columns]:
+            function_dict[col] = list
+        self._df = self._df.groupby(self._df['Sample number'], as_index=False).agg(function_dict)
+        self._grouped_samples = True
+
+    '''
+    Divide target lists data points with sample number to multiple data points.
+    '''
+    def ungroup_samples(self) -> None:
+        if not self._grouped_samples:
+            return
+        df = pd.DataFrame(columns = self._df.columns)
+        for _,row in self._df.iterrows():
+            features = row[:-5]
+            targets = row[-5:]
+            rows = pd.DataFrame(columns = self._df.columns)
+            for i in range(len(targets.iat[0])):
+                targets_i = pd.Series([targets.iat[0][i], targets.iat[1][i], targets.iat[2][i], targets.iat[3][i], targets.iat[4][i]], self._targets_columns)
+                row_i = pd.DataFrame(pd.concat((features, targets_i))).T
+                rows = row_i.copy() if rows.empty else pd.concat((rows, row_i), ignore_index=True)
+            df = rows.copy() if df.empty else pd.concat((df, rows), ignore_index=True)
+        self._df = df 
+        self._grouped_samples = False
 
     """Save dataframe to HDF."""
     def to_hdf(self,
@@ -208,7 +236,7 @@ class DataProcessing:
         for fname in pbar:
             # Ignore all unsuitable files or file is already processed.
             sample = fname[4:-5].strip() # Strip 'all ' and '.xlsx' from file name.
-            if not (fname.endswith(r'.xlsx') and 'all' in fname.lower()) or sample in self._targets_df['Sample number'].values:
+            if not (fname.endswith(r'.xlsx') and 'all' in fname.lower()) or sample in self._targets_df['Sample number'].to_numpy():
                 continue
             sample = DataProcessing.rename_target_sample(sample)
             pbar.set_description(f'Processing file "{fname}"')
@@ -240,9 +268,9 @@ class DataProcessing:
             if data.isna().any(axis=None):
                 data = df.iloc[0:9, i:i+5]
             assert(data.notna().all(axis=None))
-            rows = pd.DataFrame(data, columns=self._targets_df.columns[1:])
+            rows = pd.DataFrame(data.to_numpy(), columns=self._targets_df.columns[1:])
             rows.insert(0, 'Sample number', sample)
-            self._targets_df = rows.copy() if self._targets_df.empty else pd.concat([self._targets_df, rows], ignore_index=True)
+            self._targets_df = rows.copy() if self._targets_df.empty else pd.concat((self._targets_df, rows), ignore_index=True)
     
     """Renames sample name if necessary based on regular expressions."""
     @staticmethod
@@ -298,6 +326,14 @@ class DataProcessing:
         return self._df[self._df['Sample number'].isin(samples)]
 
     """Standardize column values, such as fixing small naming variations (e.g., uppercase/lowercase difference)."""
-    def standardize__columns(self) -> None:
+    def standardize_columns(self) -> None:
         self._df['Protein'] = self._df['Protein'].replace('A3I-A', 'A3IA')
+        self._df['Bath length (cm)'] = self._df['Bath length (cm)'].replace('2 bath', '2bath')
+        self._df['Continous spinning'] = self._df['Continous spinning'].replace([r'.*yes.*', r'(.*no.*|discontinous)'], ['yes', 'no'], regex=True)
+
+        # Convert PSI to BAR.    
+        psi_to_bar = .0689475729 
+        psis = self._df['pumppressure (bar)'].astype(str).str.contains('[pP][sS][iI]')
+        self._df.loc[psis, 'pumppressure (bar)'] = self._df.loc[psis, 'pumppressure (bar)']\
+            .apply(lambda s: str(psi_to_bar * float(s[:-3])))
                 
