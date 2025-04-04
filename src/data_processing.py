@@ -4,6 +4,7 @@ import pandas as pd
 import re
 from collections import defaultdict
 from tqdm import tqdm
+from sys import stderr
 
 '''Create object to processes the spinning data.
 
@@ -66,6 +67,10 @@ class DataProcessing:
             37 : "Humidity (tensile test)"}
         self._col_to_ind = {v: k for k, v in self._ind_to_col.items()}
 
+        self._sample_column = None
+        self._features_columns = None
+        self._targets_columns = None
+
     """Uses pandas.DataFrame implementation."""
     def __str__(self) -> str:
         return str(self._df)
@@ -97,18 +102,19 @@ class DataProcessing:
     def standardize_missing_data(self) -> None:
         # Bypass warning.
         pd.set_option('future.no_silent_downcasting', True)
-        for val in ['?', '???', 'conc unknown', '? Break']:
-            self._df = self._df.replace(val, np.nan).infer_objects(copy=False) 
+        missing_vals = ['?', '???', 'conc unknown', '? Break', 'not collected', 'n.a']
+        self._df = self._df.replace(missing_vals, np.nan).infer_objects(copy=False) 
         pd.set_option('future.no_silent_downcasting', False)
         
 
     """Load the 'Spinning experiements overview.xlsx' file. 
     Drops uninteresting columns, such as dates.
-    Also converts the 'Sample number' column values (except NaNs) to string format. """
+    Also converts the 'Sample number' column values (except NaNs) to string format."""
     def load_spinning_experiments_excel(self,
-                            fname: os.PathLike = 'Spinning experiments overview.xlsx') -> None:
+                            fname: os.PathLike = 'Spinning experiments overview.xlsx',
+                            na_targets: bool = True) -> None:
         sample_ind = 1
-        feature_inds = [2,7,8,9,11,12,13,14,15,16,17,18,19,20,22,23,24,28]
+        feature_inds = [2,7,8,9,11,12,13,14,15,16,17,18,19,20,22,23,24]
         target_inds = [29,30,31,32,33]
         inds = [sample_ind] + feature_inds + target_inds
 
@@ -122,8 +128,11 @@ class DataProcessing:
         self._df.loc[non_na_inds, 'Sample number'] = self._df.loc[non_na_inds, 'Sample number'].astype(str)
 
         self._sample_column = self._df.columns[0]
-        self._features_columns = self._df.columns[1:-5]
-        self._targets_columns = self._df.columns[-5:]
+        self._features_columns = list(self._df.columns[1:-5])
+        self._targets_columns = list(self._df.columns[-5:])
+
+        if na_targets:
+            self._df.loc[:,self._targets_columns] = np.nan
 
     """Label unnamed values for the 'Sample number' column to: '<prefix><sep><count>'."""
     def label_unnamed_samples(self, prefix: str ='unnamed', sep: str = '_') -> None:
@@ -153,15 +162,15 @@ class DataProcessing:
         self._df = self._df.drop(self._targets_columns, axis=1) \
             .merge(self._targets_df, 'left')
         assert(self._df['Sample number'].notna().all())
-        assert(self._df[self._targets_columns].notna().any(axis=None))
+        #assert(self._df[self._targets_columns].notna().any(axis=None))
 
     """Drops data points where the target values are NaNs. 
     'all_nans' flag controls if dropping only if all mechanical property value is None or any."""
     def drop_na_targets(self, all_nans: bool = False):
         if all_nans:
-            self._df = self._df[self._df[self._targets_columns].notna().all(axis=1)].reset_index(drop=True)
-        else:
             self._df = self._df[self._df[self._targets_columns].notna().any(axis=1)].reset_index(drop=True)
+        else:
+            self._df = self._df[self._df[self._targets_columns].notna().all(axis=1)].reset_index(drop=True)
 
     """Save dataframe to an Excel sheet.
     If 'aggrigate_samples' is 'True', Identical samples are aggrigated and 
@@ -171,13 +180,11 @@ class DataProcessing:
         df = self._df.copy()
         if self._grouped_samples:
             for col in self._targets_columns:
-                df[col].apply(lambda a: str(a)[1:-1])
+                df[col] = df[col].astype(str).apply(lambda a: str(a)[1:-1])
         fp = os.path.join(self._data_dir, fname)
         df.to_excel(fp, sheet_name='data', index=False)
 
-    '''
-    Collect data points with identical sample number to one data point, stored as a list.
-    '''
+    '''Collect data points with identical sample number to one data point, stored as a list.'''
     def group_samples(self) -> None:
         if self._grouped_samples:
             return
@@ -189,9 +196,7 @@ class DataProcessing:
         self._df = self._df.groupby(self._df['Sample number'], as_index=False).agg(function_dict)
         self._grouped_samples = True
 
-    '''
-    Divide target lists data points with sample number to multiple data points.
-    '''
+    '''Divide target lists data points with sample number to multiple data points.'''
     def ungroup_samples(self) -> None:
         if not self._grouped_samples:
             return
@@ -223,51 +228,56 @@ class DataProcessing:
     """Loads processed HDF file if saved, otherwise reads Excel sheets."""
     def load_targets(self) -> None:
         hdf_fp = os.path.join(self._data_dir, 'targets.hf5')
+        n = 0
         if os.path.exists(hdf_fp):
             self.load_targets_hdf()
-        else:
-            self.load_targets_excel()
+            n = len(self._targets_df)
+        self.load_targets_excel()
+        if len(self._targets_df) > n: 
             self.save_targets_hdf()
 
     """Load mechanical property values from Excel sheets with 
     naming scheme: 'all <sample name>.xlsx'."""
     def load_targets_excel(self) -> None:
-        pbar = tqdm(os.listdir(self._data_dir))
+        dir = os.path.join(self._data_dir, 'mechanical_properties')
+        pbar = tqdm(os.listdir(dir))
         for fname in pbar:
             # Ignore all unsuitable files or file is already processed.
-            sample = fname[4:-5].strip() # Strip 'all ' and '.xlsx' from file name.
+            sample = DataProcessing.rename_target_sample(fname[4:-5].strip()) # Strip 'all ' and '.xlsx' from file name.
             if not (fname.endswith(r'.xlsx') and 'all' in fname.lower()) or sample in self._targets_df['Sample number'].to_numpy():
                 continue
-            sample = DataProcessing.rename_target_sample(sample)
             pbar.set_description(f'Processing file "{fname}"')
-            fp = os.path.join(self._data_dir, fname)
+            fp = os.path.join(dir, fname)
 
             # Some sheets have naming variations.
-            try:
-                df = pd.read_excel(fp, 'all')
-            except:
+            for sheet_name in ['all', 'all ', 'ALL', 'Tabelle11', 'Summary']:
                 try:
-                    df = pd.read_excel(fp, 'all ')
-                except:
-                    df = pd.read_excel(fp, 'ALL')
+                    df = pd.read_excel(fp, sheet_name)
+                    break
+                except ValueError:
+                    pass
+            else:
+                print(f'Invalid sheet name for sample: {sample}', file=stderr)
+                continue
 
             # The diameter column have naming variations in some sheets.
-            try:
-                i = df.columns.get_loc('diameter')
-            except:
+            for diameter_name in ['diameter', 'Diameter', 'diametro', 'diameter ', 'DIAMETER', 'Diameter (um)']:
                 try:
-                    i = df.columns.get_loc('Diameter')
-                except:
-                    try:
-                        i = df.columns.get_loc('diametro')
-                    except:
-                        i = df.columns.get_loc('diameter ')
+                    i = df.columns.get_loc(diameter_name)
+                    break
+                except KeyError:
+                    pass
+            else:
+                print(f'Could not find diameter for sample: {sample}', file=stderr)
+                continue
 
             # Some samples have 9 measurements instead of 10.
             data = df.iloc[0:10, i:i+5]
+            '''
             if data.isna().any(axis=None):
                 data = df.iloc[0:9, i:i+5]
             assert(data.notna().all(axis=None))
+            '''
             rows = pd.DataFrame(data.to_numpy(), columns=self._targets_df.columns[1:])
             rows.insert(0, 'Sample number', sample)
             self._targets_df = rows.copy() if self._targets_df.empty else pd.concat((self._targets_df, rows), ignore_index=True)
@@ -276,19 +286,27 @@ class DataProcessing:
     @staticmethod
     def rename_target_sample(sample: str) -> str:
         # Rename "bxxx..." -> "Bxxx".
-        p0 = re.compile(r'(b|B)\d+')
-        p1 = re.compile(r'(b|B)enjamin')
-
-        if p0.match(sample):
+        if re.compile(r'(b|B)\d+').match(sample):
             return sample.split()[0].upper()
-        if p1.search(sample):
+
+        # Rename "Benjamin xxx ..." -> "Bxxx"
+        if re.compile(r'(b|B)enjamin \d+').match(sample):
+            return 'B' + sample.split()[1]
+
+        if re.compile(r'\d+').fullmatch(sample):
             return sample
+        raise ValueError(f'Invalid sample: {sample}')
+
+    @staticmethod
+    def rename_sample_number(sample: str) -> str:
+        if re.compile(r'(b|B)\d+').match(sample):
+            return sample.split()[0].upper()
         return sample
 
     """Save processed targets to HDF."""
-    def save_targets_hdf(self, fname: os.PathLike = 'targets.hf5') -> None: 
+    def save_targets_hdf(self, fname: os.PathLike = 'targets.hf5', mode='w') -> None: 
         fp = os.path.join(self._data_dir, fname)
-        self._targets_df.to_hdf(fp, key='targets', mode='w')
+        self._targets_df.to_hdf(fp, key='targets', mode=mode)
 
     """Load processed targets from HDF."""
     def load_targets_hdf(self, fname: os.PathLike = 'targets.hf5') -> None: 
@@ -326,14 +344,104 @@ class DataProcessing:
         return self._df[self._df['Sample number'].isin(samples)]
 
     """Standardize column values, such as fixing small naming variations (e.g., uppercase/lowercase difference)."""
-    def standardize_columns(self) -> None:
-        self._df['Protein'] = self._df['Protein'].replace('A3I-A', 'A3IA')
+    def standardize_columns(self,
+                            na_unknown_capilleries: bool = True) -> None:
+        self._df['Sample number'] = self._df['Sample number'].astype(str).apply(DataProcessing.rename_sample_number)
+        psis = self._df['pumppressure (bar)'].astype(str).str.contains('[pP][sS][iI]')
+
+        self._df['Protein'] = self._df['Protein']\
+            .replace(['A3I-A', ' A3I-A', 'Rep5 ', ' Rep3 Elastin short'], ['A3IA', 'A3IA', 'Rep5', 'Rep3 Elastin short'])
         self._df['Bath length (cm)'] = self._df['Bath length (cm)'].replace('2 bath', '2bath')
-        self._df['Continous spinning'] = self._df['Continous spinning'].replace([r'.*yes.*', r'(.*no.*|discontinous)'], ['yes', 'no'], regex=True)
+        self._df['Continous spinning'] = self._df['Continous spinning'].replace(r'yes.*', 'yes', regex=True)
+        #self._df['Continous spinning'] = self._df['Continous spinning'].replace([r'.*yes.*', r'(.*no.*|discontinous)'], ['yes', 'no'], regex=True)
 
         # Convert PSI to BAR.    
         psi_to_bar = .0689475729 
-        psis = self._df['pumppressure (bar)'].astype(str).str.contains('[pP][sS][iI]')
+        psis = self._df['pumppressure (bar)'].astype(str).str.contains(r'[pP][sS][iI]')
         self._df.loc[psis, 'pumppressure (bar)'] = self._df.loc[psis, 'pumppressure (bar)']\
             .apply(lambda s: str(psi_to_bar * float(s[:-3])))
+
+
                 
+        # 1 bath or 2 bath
+        self._df.loc[self._df['Bath length (cm)'].notna(), 'Bath length (cm)'] = \
+            self._df.loc[self._df['Bath length (cm)'].notna(), 'Bath length (cm)']\
+            .astype(str).replace(r'^\d+$', 1, regex=True)
+        pd.set_option('future.no_silent_downcasting', True)
+        self._df['Bath length (cm)'] = self._df['Bath length (cm)'].replace(r'2bath', 2).infer_objects(copy=False)
+        pd.set_option('future.no_silent_downcasting', False)
+        self._df = self._df.rename(columns={'Bath length (cm)' : 'Number of baths'})
+        self._features_columns[self._features_columns.index('Bath length (cm)')] = 'Number of baths'
+
+        # Extrusion Device
+        self._df['Extrusion device'] = self._df['Extrusion device']\
+            .replace([r'^HPLC pump.*$', r'^Syringe Pump$'], ['HPLC pump', 'Syringe pump'], regex=True)
+
+        self._df['Spinning device'] = self._df['Spinning device'].replace(['hulk', 'Hullk'], 'Hulk')
+
+        self._df['Temp C (spinning)'] = self._df['Temp C (spinning)'].replace(('21..5'), 21.5)
+
+        self._df['Reeling speed (rpm)'] = self._df['Reeling speed (rpm)']\
+            .replace(['>200', 'manually', '30&55'], [np.nan, np.nan, (30+55)/2])
+
+        range_m_min = self._df['Reeling speed (rpm)'].astype(str).str.contains(r'^\d+ \(m/min\)$')
+        #range_rpm = self._df['Reeling speed (rpm)'].astype(str).str.contains(r'^\d+$')
+        wheel_diameter = .11 
+        self._df.loc[range_m_min, 'Reeling speed (rpm)'] = self._df.loc[range_m_min, 'Reeling speed (rpm)']\
+            .apply(lambda speed: rpm_to_meter_per_minute(float(speed.split()[0]), wheel_diameter))
+        # TODO: Include different setup if manual, rpm, or m/min.
+
+
+        # Encode capillery as 3 categories and save length as numeric.
+        #self._df.astype('object').insert(self._df.columns.get_loc('Capillery size (um)'), 'Capillery type', np.nan)
+        self._df.insert(self._df.columns.get_loc('Capillery size (um)'), 'Capillery type', np.nan)
+        self._df['Capillery type'] = self._df['Capillery type'].astype('object')
+        self._features_columns.insert(self._features_columns.index('Capillery size (um)'), 'Capillery type')
+        self._df['Capillery size (um)'] = self._df['Capillery size (um)']\
+            .replace(['45 and 67 um capillary', 'broken cap >100um'], [(45+67)/2, np.nan])
+
+        range_range = self._df['Capillery size (um)'].astype(str).str.contains(r'\d+-\d+')
+        self._df.loc[range_range, 'Capillery size (um)'] = self._df.loc[range_range, 'Capillery size (um)']\
+            .apply(lambda s: np.mean([float(n.split()[0]) for n in s.split('-')]))
+
+        range_glass = self._df['Capillery size (um)'].astype(str).str.match(r'^\d+(\.\d+)?$')
+        self._df.loc[range_glass, 'Capillery type'] = self._df.loc[range_glass, 'Capillery type'] = 'Glass'
+
+        range_tubing = self._df['Capillery size (um)'].astype(str).str.contains(r'^\d+ um ID PEEK tubing')
+        self._df.loc[range_tubing, 'Capillery type'] = self._df.loc[range_tubing, 'Capillery type'] = 'PEEK tubing'
+        self._df.loc[range_tubing, 'Capillery size (um)'] = self._df.loc[range_tubing, 'Capillery size (um)']\
+            .apply(lambda s: int(s.split()[0]))
+
+        range_tecdia = self._df['Capillery size (um)'].astype(str).str.contains(r'Tecdia')
+        self._df.loc[range_tecdia, 'Capillery type'] = self._df.loc[range_tecdia, 'Capillery type'] = 'Tecdia'
+        self._df.loc[range_tecdia, 'Capillery size (um)'] = self._df.loc[range_tecdia, 'Capillery size (um)']\
+            .apply(lambda s: int(s.split()[-1].split('um')[0]))
+
+        if na_unknown_capilleries:
+            sets = [set(np.arange(len(self._df))[range]) for range in [range_glass, range_tubing, range_tecdia]]
+            inds_invalid = list(set(self._df.index).difference(set().union(*sets)))
+            self._df.loc[inds_invalid, ['Capillery size (um)']] = np.nan
+
+        
+
+def meter_per_minute_to_rpm(speed_m_min: float, wheel_diameter_m: float) -> float:
+    return speed_m_min/(np.pi*wheel_diameter_m)
+
+def rpm_to_meter_per_minute(speed_rpm: float, wheel_diameter_m: float) -> float:
+    return np.pi*wheel_diameter_m*speed_rpm
+        
+        
+
+if __name__ == '__main__':
+    dp = DataProcessing()
+    dp.load_spinning_experiments_excel()
+    dp.label_unnamed_samples()
+    dp.label_duplicate_samples()
+    dp.standardize_columns()
+    dp.load_targets()
+    dp.label_duplicate_samples()
+    dp.merge_targets()
+    dp.drop_na_targets()
+    dp.to_hdf()
+    dp.group_samples()
+    dp.to_excel()
