@@ -14,8 +14,7 @@ Also enables methods for sanatization and missing value handling.
 Methods work inplace to modify the state.
 Also provides methods for saving dataset to Excel or HDF format.
 
-Data is stored as a Pandas DataFrame, access using the df property.
-'''
+Data is stored as a Pandas DataFrame, access using the df property.'''
 class DataProcessing:
     """'data_dir' should be path to a folder containing both the 'spinning experiments overview.xlsx', 
     and the corresponding mechanical property Excel sheets."""
@@ -91,7 +90,7 @@ class DataProcessing:
     """Get the spinning conditions of the processed dataset."""
     @property
     def features(self):
-        return self._df.iloc[:,:-5]
+        return self._df.iloc[:,1:-5]
 
     """Get the mechanical property values of the processed dataset."""
     @property
@@ -101,10 +100,9 @@ class DataProcessing:
     """Convert values such as '?', to numpy.nan."""
     def standardize_missing_data(self) -> None:
         # Bypass warning.
-        pd.set_option('future.no_silent_downcasting', True)
         missing_vals = ['?', '???', 'conc unknown', '? Break', 'not collected', 'n.a']
-        self._df = self._df.replace(missing_vals, np.nan).infer_objects(copy=False) 
-        pd.set_option('future.no_silent_downcasting', False)
+        with pd.option_context("future.no_silent_downcasting", True):
+            self._df = self._df.replace(missing_vals, np.nan).infer_objects(copy=False) 
         
 
     """Load the 'Spinning experiements overview.xlsx' file. 
@@ -261,38 +259,50 @@ class DataProcessing:
                 continue
 
             # The diameter column have naming variations in some sheets.
-            for diameter_name in ['diameter', 'Diameter', 'diametro', 'diameter ', 'DIAMETER', 'Diameter (um)']:
+            if sheet_name == 'Summary':
                 try:
-                    i = df.columns.get_loc(diameter_name)
-                    break
+                    data = df.iloc[2:12,2:7]
                 except KeyError:
-                    pass
+                    print(f'Could not read spinning conditions for sample: {sample}', file=stderr)
+                    continue
             else:
-                print(f'Could not find diameter for sample: {sample}', file=stderr)
-                continue
+                for diameter_name in ['diameter', 'Diameter', 'diametro', 'diameter ', 'DIAMETER', 'Diameter (um)']:
+                    try:
+                        i = df.columns.get_loc(diameter_name)
+                        break
+                    except KeyError:
+                        pass
+                else:
+                    print(f'Could not find diameter for sample: {sample}', file=stderr)
+                    continue
+                data = df.iloc[0:10, i:i+5]
 
-            # Some samples have 9 measurements instead of 10.
-            data = df.iloc[0:10, i:i+5]
-            '''
-            if data.isna().any(axis=None):
-                data = df.iloc[0:9, i:i+5]
-            assert(data.notna().all(axis=None))
-            '''
             rows = pd.DataFrame(data.to_numpy(), columns=self._targets_df.columns[1:])
-            rows.insert(0, 'Sample number', sample)
-            self._targets_df = rows.copy() if self._targets_df.empty else pd.concat((self._targets_df, rows), ignore_index=True)
+            if re.compile(r'(b|B)\d+-\d+').fullmatch(sample):
+                beginning, end = sample.split('-')
+                for num in np.arange(int(beginning[1:]), int(end) + 1):
+                    sample_i = 'B' + str(num)
+                    rows_cpy = rows.copy()
+                    rows_cpy.insert(0, 'Sample number', sample_i)
+                    self._targets_df = rows.copy() if self._targets_df.empty else pd.concat((self._targets_df, rows_cpy), ignore_index=True)
+            else:
+                rows.insert(0, 'Sample number', sample)
+                self._targets_df = rows.copy() if self._targets_df.empty else pd.concat((self._targets_df, rows), ignore_index=True)
     
     """Renames sample name if necessary based on regular expressions."""
     @staticmethod
     def rename_target_sample(sample: str) -> str:
+        if re.compile(r'(b|B)\d+(-|_)Farnaz').fullmatch(sample):
+            if '-' in sample:
+                return sample.split('-')[0].upper()
+            else:
+                return sample.split('_')[0].upper()
         # Rename "bxxx..." -> "Bxxx".
         if re.compile(r'(b|B)\d+').match(sample):
             return sample.split()[0].upper()
-
         # Rename "Benjamin xxx ..." -> "Bxxx"
         if re.compile(r'(b|B)enjamin \d+').match(sample):
             return 'B' + sample.split()[1]
-
         if re.compile(r'\d+').fullmatch(sample):
             return sample
         raise ValueError(f'Invalid sample: {sample}')
@@ -346,81 +356,128 @@ class DataProcessing:
     """Standardize column values, such as fixing small naming variations (e.g., uppercase/lowercase difference)."""
     def standardize_columns(self,
                             na_unknown_capilleries: bool = True) -> None:
-        self._df['Sample number'] = self._df['Sample number'].astype(str).apply(DataProcessing.rename_sample_number)
-        psis = self._df['pumppressure (bar)'].astype(str).str.contains('[pP][sS][iI]')
+        col = 'Sample number'
+        self._df[col] = self._df[col].astype(str).apply(DataProcessing.rename_sample_number)
 
-        self._df['Protein'] = self._df['Protein']\
+        col = 'Protein'
+        self._df[col] = self._df[col]\
             .replace(['A3I-A', ' A3I-A', 'Rep5 ', ' Rep3 Elastin short'], ['A3IA', 'A3IA', 'Rep5', 'Rep3 Elastin short'])
-        self._df['Bath length (cm)'] = self._df['Bath length (cm)'].replace('2 bath', '2bath')
-        self._df['Continous spinning'] = self._df['Continous spinning'].replace(r'yes.*', 'yes', regex=True)
+
+        col = 'Bath length (cm)'
+        self._df[col] = self._df[col].replace('2 bath', '2bath')
+
+        col = 'Continous spinning'
+        self._df[col] = self._df[col].replace(r'yes.*', 'yes', regex=True)
         #self._df['Continous spinning'] = self._df['Continous spinning'].replace([r'.*yes.*', r'(.*no.*|discontinous)'], ['yes', 'no'], regex=True)
 
         # Convert PSI to BAR.    
+        col = 'pumppressure (bar)'
         psi_to_bar = .0689475729 
-        psis = self._df['pumppressure (bar)'].astype(str).str.contains(r'[pP][sS][iI]')
-        self._df.loc[psis, 'pumppressure (bar)'] = self._df.loc[psis, 'pumppressure (bar)']\
+        psis = self._df[col].astype(str).str.contains(r'[pP][sS][iI]')
+        self._df.loc[psis, col] = self._df.loc[psis, col]\
             .apply(lambda s: str(psi_to_bar * float(s[:-3])))
 
 
-                
         # 1 bath or 2 bath
-        self._df.loc[self._df['Bath length (cm)'].notna(), 'Bath length (cm)'] = \
-            self._df.loc[self._df['Bath length (cm)'].notna(), 'Bath length (cm)']\
+        col = 'Bath length (cm)'
+        self._df.loc[self._df[col].notna(), col] = \
+            self._df.loc[self._df[col].notna(), col]\
             .astype(str).replace(r'^\d+$', 1, regex=True)
-        pd.set_option('future.no_silent_downcasting', True)
-        self._df['Bath length (cm)'] = self._df['Bath length (cm)'].replace(r'2bath', 2).infer_objects(copy=False)
-        pd.set_option('future.no_silent_downcasting', False)
-        self._df = self._df.rename(columns={'Bath length (cm)' : 'Number of baths'})
-        self._features_columns[self._features_columns.index('Bath length (cm)')] = 'Number of baths'
+        with pd.option_context("future.no_silent_downcasting", True):
+            self._df[col] = self._df[col].replace(r'2bath', 2).infer_objects(copy=False)
+        new_col = 'Number of baths'
+        self._df = self._df.rename(columns={col : new_col})
+        self._features_columns[self._features_columns.index(col)] = new_col
+        #self._df.loc[self._df['Number of baths'].notna(),'Number of baths'] =\
+        #    self._df.loc[self._df['Number of baths'].notna(),'Number of baths'].astype(int)
 
         # Extrusion Device
-        self._df['Extrusion device'] = self._df['Extrusion device']\
+        col = 'Extrusion device'
+        self._df[col] = self._df[col]\
             .replace([r'^HPLC pump.*$', r'^Syringe Pump$'], ['HPLC pump', 'Syringe pump'], regex=True)
 
-        self._df['Spinning device'] = self._df['Spinning device'].replace(['hulk', 'Hullk'], 'Hulk')
+        col = 'Spinning device'
+        self._df[col] = self._df[col].replace(['hulk', 'Hullk'], 'Hulk')
 
-        self._df['Temp C (spinning)'] = self._df['Temp C (spinning)'].replace(('21..5'), 21.5)
+        col = 'Temp C (spinning)'
+        self._df[col] = self._df[col].replace(('21..5'), 21.5)
 
-        self._df['Reeling speed (rpm)'] = self._df['Reeling speed (rpm)']\
+        col = 'Reeling speed (rpm)'
+        self._df[col] = self._df[col]\
             .replace(['>200', 'manually', '30&55'], [np.nan, np.nan, (30+55)/2])
 
-        range_m_min = self._df['Reeling speed (rpm)'].astype(str).str.contains(r'^\d+ \(m/min\)$')
-        #range_rpm = self._df['Reeling speed (rpm)'].astype(str).str.contains(r'^\d+$')
+        range_m_min = self._df[col].astype(str).str.contains(r'^\d+ \(?m/min\)?$')
+        #range_rpm = self._df[col].astype(str).str.contains(r'^\d+$')
         wheel_diameter = .11 
-        self._df.loc[range_m_min, 'Reeling speed (rpm)'] = self._df.loc[range_m_min, 'Reeling speed (rpm)']\
+        self._df.loc[range_m_min, col] = self._df.loc[range_m_min, col]\
             .apply(lambda speed: rpm_to_meter_per_minute(float(speed.split()[0]), wheel_diameter))
         # TODO: Include different setup if manual, rpm, or m/min.
 
+        col = 'Flow rate (ul/min)'
+        range = self._df[col].astype(str).str.contains(r'\d+-\d+')
+        self._df.loc[range, col] = self._df.loc[range, col]\
+            .apply(lambda s: np.mean([float(n.split()[0]) for n in s.split('-')]))
+        range = self._df[col].astype(str).str.contains(r'\d+ & \d+')
+        self._df.loc[range, col] = self._df.loc[range, col]\
+            .apply(lambda s: np.mean([float(n) for n in s.split(' & ')]))
+
+
+        col = 'concentration (mg/ml)'
+        range = self._df[col].astype(str).str.contains(r'~ ?\d+')
+        self._df.loc[range, col] = self._df.loc[range, col]\
+            .apply(lambda s: float(s.split('~')[-1].strip()))
+        with pd.option_context("future.no_silent_downcasting", True):
+            self._df[col] = self._df[col].replace(r'17% in HFIP', np.nan).infer_objects(copy=False)
+
 
         # Encode capillery as 3 categories and save length as numeric.
-        #self._df.astype('object').insert(self._df.columns.get_loc('Capillery size (um)'), 'Capillery type', np.nan)
-        self._df.insert(self._df.columns.get_loc('Capillery size (um)'), 'Capillery type', np.nan)
-        self._df['Capillery type'] = self._df['Capillery type'].astype('object')
-        self._features_columns.insert(self._features_columns.index('Capillery size (um)'), 'Capillery type')
-        self._df['Capillery size (um)'] = self._df['Capillery size (um)']\
-            .replace(['45 and 67 um capillary', 'broken cap >100um'], [(45+67)/2, np.nan])
+        col = 'Capillery size (um)'
+        col_type = 'Capillery type'
+        self._df.insert(self._df.columns.get_loc(col), col_type, np.nan)
+        self._df[col_type] = self._df[col_type].astype('object')
+        self._features_columns.insert(self._features_columns.index(col), col_type)
+        self._df[col] = self._df[col].replace(['45 and 67 um capillary', 'broken cap >100um'], [(45+67)/2, np.nan])
 
-        range_range = self._df['Capillery size (um)'].astype(str).str.contains(r'\d+-\d+')
-        self._df.loc[range_range, 'Capillery size (um)'] = self._df.loc[range_range, 'Capillery size (um)']\
+        range_range = self._df[col].astype(str).str.contains(r'\d+-\d+')
+        self._df.loc[range_range, col] = self._df.loc[range_range, col]\
             .apply(lambda s: np.mean([float(n.split()[0]) for n in s.split('-')]))
 
-        range_glass = self._df['Capillery size (um)'].astype(str).str.match(r'^\d+(\.\d+)?$')
-        self._df.loc[range_glass, 'Capillery type'] = self._df.loc[range_glass, 'Capillery type'] = 'Glass'
+        range_glass = self._df[col].astype(str).str\
+            .match(r'(^\d+(\.\d+)?$)|(.*\d+ broken$)|(.*\d+ ?um$)$')
+        self._df.loc[range_glass, col_type] = self._df.loc[range_glass, col_type] = 'Glass'
 
-        range_tubing = self._df['Capillery size (um)'].astype(str).str.contains(r'^\d+ um ID PEEK tubing')
-        self._df.loc[range_tubing, 'Capillery type'] = self._df.loc[range_tubing, 'Capillery type'] = 'PEEK tubing'
-        self._df.loc[range_tubing, 'Capillery size (um)'] = self._df.loc[range_tubing, 'Capillery size (um)']\
+
+        range = self._df[col].astype(str).str\
+            .contains(r'<|>')
+        self._df.loc[range, col] = np.nan
+
+        range = self._df[col].astype(str).str\
+            .match(r'.*\d+ broken$')
+        self._df.loc[range, col] = self._df.loc[range, col]\
+            .apply(lambda s: int(s.split()[-2]))
+
+        range = self._df[col].astype(str).str\
+            .match(r'.*\d+ ?um$')
+        self._df.loc[range, col] = self._df.loc[range, col]\
+            .apply(lambda s: int(s.replace('um','').split()[-1]))
+
+
+        range_tubing = self._df[col].astype(str).str.contains(r'^\d+ um ID PEEK tubing')
+        self._df.loc[range_tubing, col_type] = self._df.loc[range_tubing, col_type] = 'PEEK tubing'
+        self._df.loc[range_tubing, col] = self._df.loc[range_tubing, col]\
             .apply(lambda s: int(s.split()[0]))
 
-        range_tecdia = self._df['Capillery size (um)'].astype(str).str.contains(r'Tecdia')
-        self._df.loc[range_tecdia, 'Capillery type'] = self._df.loc[range_tecdia, 'Capillery type'] = 'Tecdia'
-        self._df.loc[range_tecdia, 'Capillery size (um)'] = self._df.loc[range_tecdia, 'Capillery size (um)']\
+        range_tecdia = self._df[col].astype(str).str.contains(r'Tecdia')
+        self._df.loc[range_tecdia, col_type] = self._df.loc[range_tecdia, col_type] = 'Tecdia'
+        self._df.loc[range_tecdia, col] = self._df.loc[range_tecdia, col]\
             .apply(lambda s: int(s.split()[-1].split('um')[0]))
+
+        #self._df.astype(str).str.contains('Aspect Biosystems Duo-1')
 
         if na_unknown_capilleries:
             sets = [set(np.arange(len(self._df))[range]) for range in [range_glass, range_tubing, range_tecdia]]
             inds_invalid = list(set(self._df.index).difference(set().union(*sets)))
-            self._df.loc[inds_invalid, ['Capillery size (um)']] = np.nan
+            self._df.loc[inds_invalid, [col]] = np.nan
 
         
 
