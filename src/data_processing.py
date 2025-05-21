@@ -5,6 +5,7 @@ import re
 from collections import defaultdict
 from tqdm import tqdm
 from sys import stderr
+from typing import Literal, Iterable, LiteralString
 
 '''Create object to processes the spinning data.
 
@@ -19,7 +20,7 @@ class DataProcessing:
     """'data_dir' should be path to a folder containing both the 'spinning experiments overview.xlsx', 
     and the corresponding mechanical property Excel sheets."""
     def __init__(self, 
-                 data_dir: os.PathLike = os.path.join(os.path.pardir, 'data')) -> None:
+                 data_dir: str | LiteralString = os.path.join(os.path.pardir, 'data')) -> None:
         self._df: pd.DataFrame = pd.DataFrame()
         self._targets_df = pd.DataFrame(columns=['Sample number', 'Diameter (µm)', 'strain (mm/mm)', 'strength (MPa)', 'Youngs Modulus (Gpa)', 'Toughness (MJ m-3)'])
         self._data_dir = data_dir
@@ -66,9 +67,9 @@ class DataProcessing:
             37 : "Humidity (tensile test)"}
         self._col_to_ind = {v: k for k, v in self._ind_to_col.items()}
 
-        self._sample_column = None
-        self._features_columns = None
-        self._targets_columns = None
+        self._sample_column = ''
+        self._features_columns = []
+        self._targets_columns = []
 
     """Uses pandas.DataFrame implementation."""
     def __str__(self) -> str:
@@ -102,14 +103,14 @@ class DataProcessing:
         # Bypass warning.
         missing_vals = ['?', '???', 'conc unknown', '? Break', 'not collected', 'n.a']
         with pd.option_context("future.no_silent_downcasting", True):
-            self._df = self._df.replace(missing_vals, np.nan).infer_objects(copy=False) 
+            self._df = self._df.replace(missing_vals, np.nan).infer_objects() 
         
 
     """Load the 'Spinning experiements overview.xlsx' file. 
     Drops uninteresting columns, such as dates.
     Also converts the 'Sample number' column values (except NaNs) to string format."""
     def load_spinning_experiments_excel(self,
-                            fname: os.PathLike = 'Spinning experiments overview.xlsx',
+                            fname: str | LiteralString = 'Spinning experiments overview.xlsx',
                             na_targets: bool = True) -> None:
         sample_ind = 1
         feature_inds = [2,7,8,9,11,12,13,14,15,16,17,18,19,20,22,23,24]
@@ -144,7 +145,10 @@ class DataProcessing:
     def label_duplicate_samples(self, sep: str = '-') -> None:
         duplicates = defaultdict(lambda: 0) 
         for i, sample in self._df.loc[self._df['Sample number'].duplicated(False), 'Sample number'].items():
-            self._df.loc[i,'Sample number'] = f'{sample}{sep}{duplicates[sample]}'
+            if isinstance(i, int):
+                self._df.loc[i, 'Sample number'] = f'{sample}{sep}{duplicates[sample]}'
+            else: 
+                raise TypeError(f'Index: {i}, is not of type int')
             duplicates[sample] += 1
         assert(self._df['Sample number'].is_unique)
 
@@ -160,6 +164,7 @@ class DataProcessing:
         self._df = self._df.drop(self._targets_columns, axis=1) \
             .merge(self._targets_df, 'left')
         assert(self._df['Sample number'].notna().all())
+        self._df['Sample number'] = self._df['Sample number'].astype(str)
         #assert(self._df[self._targets_columns].notna().any(axis=None))
 
     """Drops data points where the target values are NaNs. 
@@ -169,18 +174,6 @@ class DataProcessing:
             self._df = self._df[self._df[self._targets_columns].notna().any(axis=1)].reset_index(drop=True)
         else:
             self._df = self._df[self._df[self._targets_columns].notna().all(axis=1)].reset_index(drop=True)
-
-    """Save dataframe to an Excel sheet.
-    If 'aggrigate_samples' is 'True', Identical samples are aggrigated and 
-    mechanical property values are stored as a comma-separated list."""
-    def to_excel(self, 
-                  fname: os.PathLike = 'spinning_data.xlsx') -> None:
-        df = self._df.copy()
-        if self._grouped_samples:
-            for col in self._targets_columns:
-                df[col] = df[col].astype(str).apply(lambda a: str(a)[1:-1])
-        fp = os.path.join(self._data_dir, fname)
-        df.to_excel(fp, sheet_name='data', index=False)
 
     '''Collect data points with identical sample number to one data point, stored as a list.'''
     def group_samples(self) -> None:
@@ -199,7 +192,7 @@ class DataProcessing:
         if not self._grouped_samples:
             return
         df = pd.DataFrame(columns = self._df.columns)
-        for _,row in self._df.iterrows():
+        for _, row in self._df.iterrows():
             features = row[:-5]
             targets = row[-5:]
             rows = pd.DataFrame(columns = self._df.columns)
@@ -211,32 +204,50 @@ class DataProcessing:
         self._df = df 
         self._grouped_samples = False
 
+    """Save dataframe to CSV."""
+    def to_csv(self,
+               fname: str | os.PathLike = 'spinning_data.csv') -> None:
+        fp = os.path.join(self._data_dir, fname)
+        self._df.to_csv(fp, index=False)
+
     """Save dataframe to HDF."""
     def to_hdf(self,
-               fname: os.PathLike = 'spinning_data.hf5') -> None:
+               fname: str | os.PathLike | pd.HDFStore = 'spinning_data.hf5') -> None:
         fp = os.path.join(self._data_dir, fname)
         self._df.to_hdf(fp, key='spinning_data', mode='w')
 
-    """Read processed dataset from HDF."""
-    def read_hdf(self,
-               fname: os.PathLike = 'spinning_data.hf5') -> None:
+    """Save dataframe to an Excel sheet.
+    If 'aggrigate_samples' is 'True', Identical samples are aggrigated and 
+    mechanical property values are stored as a comma-separated list."""
+    def to_excel(self, 
+                  fname: str | LiteralString = 'spinning_data.xlsx') -> None:
+        df = self._df.copy()
+        if self._grouped_samples:
+            for col in self._targets_columns:
+                df[col] = df[col].astype(str).apply(lambda a: str(a)[1:-1])
         fp = os.path.join(self._data_dir, fname)
-        self._df = pd.read_hdf(fp, key='spinning_data', mode='r')
+        df.to_excel(fp, sheet_name='data', index=False)
+
+    """Read processed dataset from HDF."""
+    def read_hdf(self, 
+                 fname: str | os.PathLike | pd.HDFStore = 'spinning_data.hf5') -> None:
+        fp = os.path.join(self._data_dir, fname)
+        self._df = pd.DataFrame(pd.read_hdf(fp, key='spinning_data', mode='r'))
 
     """Loads processed HDF file if saved, otherwise reads Excel sheets."""
     def load_targets(self) -> None:
-        hdf_fp = os.path.join(self._data_dir, 'targets.hf5')
+        hdf_fp = os.path.join(self._data_dir, 'targets.csv')
         n = 0
         if os.path.exists(hdf_fp):
-            self.load_targets_hdf()
+            self.targets_read_csv()
             n = len(self._targets_df)
-        self.load_targets_excel()
+        self.targets_read_excel()
         if len(self._targets_df) > n: 
-            self.save_targets_hdf()
+            self.targets_to_csv()
 
     """Load mechanical property values from Excel sheets with 
     naming scheme: 'all <sample name>.xlsx'."""
-    def load_targets_excel(self) -> None:
+    def targets_read_excel(self) -> None:
         dir = os.path.join(self._data_dir, 'mechanical_properties')
         pbar = tqdm(os.listdir(dir))
         for fname in pbar:
@@ -275,7 +286,10 @@ class DataProcessing:
                 else:
                     print(f'Could not find diameter for sample: {sample}', file=stderr)
                     continue
-                data = df.iloc[0:10, i:i+5]
+                if isinstance(i, int):
+                    data = df.iloc[0:10, i:i+5]
+                else:
+                    raise TypeError(f'Index: {i}, is not of type int')
 
             rows = pd.DataFrame(data.to_numpy(), columns=self._targets_df.columns[1:])
             if re.compile(r'(b|B)\d+-\d+').fullmatch(sample):
@@ -313,13 +327,23 @@ class DataProcessing:
             return sample.split()[0].upper()
         return sample
 
+    """Save processed targets to CSV."""
+    def targets_to_csv(self, fname: str | os.PathLike = 'targets.csv') -> None: 
+        fp = os.path.join(self._data_dir, fname)
+        self._targets_df.to_csv(fp, index=False)
+
+    """Load processed targets from CSV."""
+    def targets_read_csv(self, fname: str | os.PathLike = 'targets.csv') -> None: 
+        fp = os.path.join(self._data_dir, fname)
+        self._targets_df = pd.read_csv(fp)
+
     """Save processed targets to HDF."""
-    def save_targets_hdf(self, fname: os.PathLike = 'targets.hf5', mode='w') -> None: 
+    def targets_to_hdf(self, fname: str | os.PathLike | pd.HDFStore = 'targets.hf5', mode: Literal['a', 'w', 'r+']='w') -> None: 
         fp = os.path.join(self._data_dir, fname)
         self._targets_df.to_hdf(fp, key='targets', mode=mode)
 
     """Load processed targets from HDF."""
-    def load_targets_hdf(self, fname: os.PathLike = 'targets.hf5') -> None: 
+    def targets_read_hdf(self, fname: str | os.PathLike | pd.HDFStore = 'targets.hf5') -> None: 
         fp = os.path.join(self._data_dir, fname)
         self._targets_df = pd.read_hdf(fp, key='targets', mode='r')
 
@@ -328,7 +352,7 @@ class DataProcessing:
     If value is specified, replace each NaN with that value.
     Mode can be either 'mean', 'median', 'mode', 'min' or 'max'. 
     If mode is specified, replace NaN by the corresponding statistic/strategy."""
-    def fill_na(self, column: str, value: any = None, mode: str | None = None) -> None:
+    def fill_na(self, column: str, value: int | float | str | None = None, mode: str | None = None) -> None:
         if (value is None and mode is None) or (value is not None and mode is not None):
             raise ValueError("Exactly one of 'value' or 'mode' must be specified.")
         if mode is not None:
@@ -338,7 +362,7 @@ class DataProcessing:
                 case 'median':
                     value = self._df[column].median()
                 case 'mode':
-                    value = self._df[column].mode()
+                    value = self._df[column].mode()[0]
                 case 'max':
                     value = self._df[column].max()
                 case 'min':
@@ -348,7 +372,7 @@ class DataProcessing:
         self._df[column] = self._df[column].fillna(value)
             
     """Return all samples with sample name 'sample' as a Pandas DataFrame."""
-    def get_samples(self, samples: any) -> pd.DataFrame:
+    def get_samples(self, samples: Iterable[str] | pd.Series) -> pd.DataFrame:
         if type(samples) is str:
             samples = [samples]
         return self._df[self._df['Sample number'].isin(samples)]
@@ -360,8 +384,29 @@ class DataProcessing:
         self._df[col] = self._df[col].astype(str).apply(DataProcessing.rename_sample_number)
 
         col = 'Protein'
+        protein_replace = {'A3I-A': 'A3IA',
+             ' A3I-A': 'A3IA', 
+             'NT2repCT': 'NT2RepCT',
+             'Rep2 Resilin': 'Rep2',
+             'Rep5 ': 'Rep5',
+             '3Rep': 'Rep3',
+             'Rep3 Elastin': 'Rep3',
+             'Rep3 Elastin short': 'Rep3',
+             ' Rep3 Elastin short': 'Rep3',
+             'Rep4 Elastin long': 'Rep4',
+             'Rep7 Tusp': 'Rep7',
+             'pAAAIpA': 'A3IA',
+             'fNT-A3IA-MCT': 'fNT A3IA',
+             'BrMasp2 300': 'Br_MaSp2_300',
+             'BrMasp2 400': 'Br_MaSp2_400',
+             'Br_Masp2long': 'Br_MaSp2_long',
+             'Br_Masp2short': 'Br_MaSp2_short',
+             'Br_Masp2long': 'Br_MaSp2_long',
+             'Br_Masp4long': 'Br_MaSp4_long',
+             'Br_Masp4short': 'Br_MaSp4_short'}
         self._df[col] = self._df[col]\
-            .replace(['A3I-A', ' A3I-A', 'Rep5 ', ' Rep3 Elastin short'], ['A3IA', 'A3IA', 'Rep5', 'Rep3 Elastin short'])
+            .replace(protein_replace)
+            #.replace(['A3I-A', ' A3I-A', 'Rep5 ', ' Rep3 Elastin short'], ['A3IA', 'A3IA', 'Rep5', 'Rep3 Elastin short'])
 
         col = 'Bath length (cm)'
         self._df[col] = self._df[col].replace('2 bath', '2bath')
@@ -382,14 +427,13 @@ class DataProcessing:
         col = 'Bath length (cm)'
         self._df.loc[self._df[col].notna(), col] = \
             self._df.loc[self._df[col].notna(), col]\
-            .astype(str).replace(r'^\d+$', 1, regex=True)
+            .astype(str).replace(r'^\d+$', '1', regex=True)
         with pd.option_context("future.no_silent_downcasting", True):
-            self._df[col] = self._df[col].replace(r'2bath', 2).infer_objects(copy=False)
+            self._df[col] = self._df[col].replace(r'2bath', '2').infer_objects()
+        self._df.loc[:,col] = self._df.loc[:,col].astype('object')
         new_col = 'Number of baths'
         self._df = self._df.rename(columns={col : new_col})
         self._features_columns[self._features_columns.index(col)] = new_col
-        #self._df.loc[self._df['Number of baths'].notna(),'Number of baths'] =\
-        #    self._df.loc[self._df['Number of baths'].notna(),'Number of baths'].astype(int)
 
         # Extrusion Device
         col = 'Extrusion device'
@@ -427,13 +471,17 @@ class DataProcessing:
         self._df.loc[range, col] = self._df.loc[range, col]\
             .apply(lambda s: float(s.split('~')[-1].strip()))
         with pd.option_context("future.no_silent_downcasting", True):
-            self._df[col] = self._df[col].replace(r'17% in HFIP', np.nan).infer_objects(copy=False)
+            self._df[col] = self._df[col].replace(r'17% in HFIP', np.nan).infer_objects()
 
 
         # Encode capillery as 3 categories and save length as numeric.
         col = 'Capillery size (um)'
         col_type = 'Capillery type'
-        self._df.insert(self._df.columns.get_loc(col), col_type, np.nan)
+        loc = self._df.columns.get_loc(col)
+        if isinstance(loc, int):
+            self._df.insert(loc, col_type, np.nan)
+        else:
+            raise TypeError(f'Index: {loc}, is not of type int')
         self._df[col_type] = self._df[col_type].astype('object')
         self._features_columns.insert(self._features_columns.index(col), col_type)
         self._df[col] = self._df[col].replace(['45 and 67 um capillary', 'broken cap >100um'], [(45+67)/2, np.nan])
@@ -479,6 +527,31 @@ class DataProcessing:
             inds_invalid = list(set(self._df.index).difference(set().union(*sets)))
             self._df.loc[inds_invalid, [col]] = np.nan
 
+        self._df.loc[:, self.numerical_features] = self._df.loc[:, self.numerical_features].astype(float)
+        self._df.loc[:, self.categorical_features] = self._df.loc[:, self.categorical_features].astype('category')
+        self._df.loc[:, self._targets_columns] = self._df.loc[:, self._targets_columns].astype(float)
+
+    def sort(self) -> None:
+        self._df.sort_values('Sample number', axis='index', ignore_index=True)
+
+    @property
+    def categorical_features(self) -> list[str]:
+        return list(self._df.columns[[1,3,4,5,7,11,18]])
+
+    @property
+    def numerical_features(self) -> list[str]:
+        return list(self._df.columns[[2,6,8,9,10,12,13,14,15,16,17]])
+
+    def append_sequence_embeddings(self, csv_fname: str | os.PathLike='protein_embeddings_pca.csv') -> None:
+        csv_path = os.path.join(os.pardir, 'data', csv_fname)
+        df_pca = pd.read_csv(csv_path)
+        num_embeddings = df_pca.shape[-1] - 1
+        self._df = dp.df.merge(df_pca, how='inner', on='Protein')
+        n = self._df.shape[-1]
+        self._df = self._df.iloc[:, \
+            list(range(n - 5 - num_embeddings)) + \
+            list(range(n -num_embeddings, n)) + \
+            list(range(n - 5 - num_embeddings, n - num_embeddings))]
         
 
 def meter_per_minute_to_rpm(speed_m_min: float, wheel_diameter_m: float) -> float:
@@ -499,6 +572,14 @@ if __name__ == '__main__':
     dp.label_duplicate_samples()
     dp.merge_targets()
     dp.drop_na_targets()
-    dp.to_hdf()
     dp.group_samples()
     dp.to_excel()
+    dp.ungroup_samples()
+    dp.sort()
+    dp.to_csv()
+    dp.to_hdf()
+    dp.append_sequence_embeddings()
+    dp.to_csv('spinning_data_embeddings.csv')
+    dp.to_hdf('spinning_data_embeddings.hf5')
+    dp.group_samples()
+    dp.to_excel('spinning_data_embeddings.xlsx')
