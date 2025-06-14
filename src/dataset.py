@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
@@ -28,12 +29,13 @@ class Dataset():
     def __len__(self) -> int:
         return len(self._df)
         
-    def __getitem__(self, key: int | slice) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[pd.Series[float | str], pd.Series[float]]:
-        return self.features[key], self.targets[key]
+    def __getitem__(self, idx: int | slice) -> tuple[pd.DataFrame | pd.Series, pd.DataFrame | pd.Series]:
+        return self.features.iloc[idx], self.targets.iloc[idx]
 
-    def __call__(self) -> tuple[pd.DataFrame, pd.DataFrame] | tuple[pd.Series[float | str], pd.Series[float]]:
-        assert()
-        return self[:] 
+    def __call__(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+        X, Y = self[:] 
+        assert(type(X) == pd.DataFrame and type(Y) == pd.DataFrame)
+        return X, Y
 
     @property
     def features(self) -> pd.DataFrame:
@@ -48,6 +50,10 @@ class Dataset():
         return list(self._df.columns[[1,3,4,5,7,11,18]])
 
     @property
+    def categorical_features(self) -> list[int]:
+        return [1,3,4,5,7,11,18]
+
+    @property
     def numerical_columns(self) -> list[str]:
         return list(self._df.columns[[2,6,8,9,10,12,13,14,15,16,17]]) + list(self._df.columns[19:-5])
 
@@ -56,7 +62,7 @@ class Dataset():
         return list(self._df.columns[-5:])
 
     @property
-    def sample_numbers(self) -> pd.Series[str]:
+    def sample_numbers(self) -> pd.Series:
         return self._df.iloc[:, 0]
 
     @property
