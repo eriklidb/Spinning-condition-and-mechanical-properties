@@ -127,3 +127,24 @@ def compute_metrics(y_true, y_pred) -> pd.DataFrame:
             r2_score(y_true, y_pred, multioutput='raw_values'),
             pearsonr(y_true, y_pred).statistic] # type: ignore
     return pd.DataFrame(data, index, columns)
+
+if __name__ == '__main__':
+    seed = 42
+    ds = {}
+    ds['A'] = Dataset('spinning_data.csv')
+    ds['B'] = Dataset('spinning_data_embeddings.csv')
+    cv_type = 'kfold'
+    n_folds = 3
+    n_inner_folds = 5
+    mt = ModelTrainer(n_outer_folds=n_folds, n_inner_folds=n_inner_folds, cv_type=cv_type, random_state=seed)
+    models = {}
+    study_params = {
+        #'n_trails': 50,
+        'n_trails': 1,
+        'timeout': 1800,
+        'n_jobs': -1
+    }
+    for k in 'A', 'B':
+        models[k] = mt.hyperparameter_search(ds[k], study_name=k, **study_params)
+        for i, model in enumerate(models[k]):
+            save_model(model, f'model_{k}_fold_{i}')

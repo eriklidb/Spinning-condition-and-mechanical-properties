@@ -1,12 +1,12 @@
 import os
-import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from typing import Literal
 
 class Dataset():
     def __init__(self, 
                  source: pd.DataFrame | str = 'spinning_data.csv',
-                 scale_targets: bool=True) -> None:
+                 scaler: None | Literal['minmax, standard'] = None) -> None:
         if isinstance(source, pd.DataFrame):
             self._df = source.reset_index(drop=True)
         else:
@@ -22,8 +22,11 @@ class Dataset():
         self._df.loc[:, self.categorical_columns] = self._df.loc[:, self.categorical_columns].astype('category')
         self._df.loc[:, self.target_columns] = self._df.loc[:, self.target_columns].astype(float)
 
-        self._scaler = MinMaxScaler()
-        if scale_targets:
+        if scaler == 'minmax':
+            self._scaler = MinMaxScaler()
+        elif scaler == 'standard':
+            self._scaler = StandardScaler()
+        if self._scaler is not None:
             self._df.iloc[:, -5:] = self._scaler.fit_transform(self._df.iloc[:, -5:])
     
     def __len__(self) -> int:
