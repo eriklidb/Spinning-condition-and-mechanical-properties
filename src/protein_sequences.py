@@ -128,12 +128,12 @@ def pca(embedding_df: pd.DataFrame, save_embeddings: bool=True) -> pd.DataFrame:
 
 
 if __name__ == '__main__':
-    MODEL_NAMES = "facebook/esm2_t6_8M_UR50D",
+    MODEL_NAMES = ["facebook/esm2_t6_8M_UR50D",
                 "facebook/esm2_t12_35M_UR50D",
                 "facebook/esm2_t30_150M_UR50D",
                 "facebook/esm2_t33_650M_UR50D",
                 "facebook/esm2_t36_3B_UR50D",
-                "facebook/esm2_t48_15B_UR50D"
+                "facebook/esm2_t48_15B_UR50D"]
     MODEL_NAME = MODEL_NAMES[2]
     embedding_gen = EmbeddingGenerator(MODEL_NAME)
     embedding_df = embedding_gen.get_embeddings()

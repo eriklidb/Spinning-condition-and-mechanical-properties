@@ -6,7 +6,7 @@ from typing import Literal
 class Dataset():
     def __init__(self, 
                  source: pd.DataFrame | str = 'spinning_data.csv',
-                 scaler: None | Literal['minmax, standard'] = None) -> None:
+                 scaler: Literal['minmax', 'standard'] = 'minmax') -> None:
         if isinstance(source, pd.DataFrame):
             self._df = source.reset_index(drop=True)
         else:
@@ -18,6 +18,7 @@ class Dataset():
             else:
                 raise ValueError('Filetype must be either CSV or HDF.')
             
+        #self._df.loc[:,'Number of baths'] = self._df.loc[:,'Number of baths'].astype(object)
         self._df.loc[:, self.numerical_columns] = self._df.loc[:, self.numerical_columns].astype(float)
         self._df.loc[:, self.categorical_columns] = self._df.loc[:, self.categorical_columns].astype('category')
         self._df.loc[:, self.target_columns] = self._df.loc[:, self.target_columns].astype(float)
@@ -26,8 +27,8 @@ class Dataset():
             self._scaler = MinMaxScaler()
         elif scaler == 'standard':
             self._scaler = StandardScaler()
-        if self._scaler is not None:
-            self._df.iloc[:, -5:] = self._scaler.fit_transform(self._df.iloc[:, -5:])
+        self._df.iloc[:, -5:] = self._scaler.fit_transform(self._df.iloc[:, -5:])
+
     
     def __len__(self) -> int:
         return len(self._df)
@@ -42,27 +43,44 @@ class Dataset():
 
     @property
     def features(self) -> pd.DataFrame:
-        return self._df.iloc[:, 1:-5]
+        return self._df.iloc[:, 1:-len(self.target_columns)]
 
     @property
     def targets(self) -> pd.DataFrame:
-        return self._df.iloc[:, -5:]
+        return self._df.loc[:, self.target_columns]
 
     @property
     def categorical_columns(self) -> list[str]:
-        return list(self._df.columns[[1,3,4,5,7,11,18]])
+        return list(set(self._df.columns).intersection({'Protein', 
+            'Spinning device', 'Extrusion device', 'Number of baths', 
+            'Spinning Buffer', 'Capillery type', 'Continous spinning'}))
 
-    @property
-    def categorical_features(self) -> list[int]:
-        return [1,3,4,5,7,11,18]
+    #@property
+    #def categorical_features(self) -> list[int]:
+    #    return [1,3,4,5,7,11,18]
 
     @property
     def numerical_columns(self) -> list[str]:
-        return list(self._df.columns[[2,6,8,9,10,12,13,14,15,16,17]]) + list(self._df.columns[19:-5])
+        return list(set(self._df.columns).difference(set(['Sample number'] + self.target_columns + self.categorical_columns)))
+
+    #@property
+    #def numerical_features(self) -> list[int]:
+    #    return [2,6,8,9,10,12,13,14,15,16,17] + list(range(19, self._df.shape[1] - 5))
 
     @property
     def target_columns(self) -> list[str]:
-        return list(self._df.columns[-5:])
+        targets = []
+        for target in 'Diameter (µm)',\
+            'Strain (mm/mm)', 'Strength (MPa)',\
+            'Youngs Modulus (GPa)', 'Toughness Modulus (MJ m-3)':
+            if target in self._df.columns:
+                targets.append(target)
+        return targets
+
+    #@property
+    #def target_inds(self) -> list[int]:
+    #    n = self._df.shape[1]
+    #    return list(range(n - 5, n))
 
     @property
     def sample_numbers(self) -> pd.Series:

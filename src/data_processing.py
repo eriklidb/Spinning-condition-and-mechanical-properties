@@ -22,7 +22,7 @@ class DataProcessing:
     def __init__(self, 
                  data_dir: str | LiteralString = os.path.join(os.path.pardir, 'data')) -> None:
         self._df: pd.DataFrame = pd.DataFrame()
-        self._targets_df = pd.DataFrame(columns=['Sample number', 'Diameter (µm)', 'strain (mm/mm)', 'strength (MPa)', 'Youngs Modulus (Gpa)', 'Toughness (MJ m-3)'])
+        self._targets_df = pd.DataFrame(columns=['Sample number', 'Diameter (µm)', 'Strain (mm/mm)', 'Strength (MPa)', 'Youngs Modulus (GPa)', 'Toughness Modulus (MJ m-3)'])
         self._data_dir = data_dir
         self._unnamed_sample_count = 0
         self._grouped_samples = False
@@ -57,10 +57,10 @@ class DataProcessing:
             27 : "mechanical testing date",
             28 : "# fibers",
             29 : "Diameter (µm)",
-            30 : "strain (mm/mm)",
-            31 : "strength (MPa)",
-            32 : "Youngs Modulus (Gpa)",
-            33 : "Toughness (MJ m-3)",
+            30 : "Strain (mm/mm)",
+            31 : "Strength (MPa)",
+            32 : "Youngs Modulus (GPa)",
+            33 : "Toughness Modulus (MJ m-3)",
             34 : "Water Soluble (10 min after spin)",
             35 : "Water Soluble (>7 days after spin)",
             36 : "Temp C (tensile test)",
@@ -119,6 +119,11 @@ class DataProcessing:
 
         fp = os.path.join(self._data_dir, fname)
         self._df = pd.read_excel(fp, usecols=inds, skiprows=2)
+        self._df = self._df.rename({
+            'strain (mm/mm)': 'Strain (mm/mm)',
+            'strength (MPa)': 'Strength (MPa)',
+            'Youngs Modulus (Gpa)': 'Youngs Modulus (GPa)',
+            'Toughness (MJ m-3)': 'Toughness Modulus (MJ m-3)'}, axis=1)
 
         self.standardize_missing_data()
 
@@ -287,7 +292,7 @@ class DataProcessing:
                     print(f'Could not find diameter for sample: {sample}', file=stderr)
                     continue
                 if isinstance(i, int):
-                    data = df.iloc[0:10, i:i+5]
+                    data = df.iloc[:10, i:i+5]
                 else:
                     raise TypeError(f'Index: {i}, is not of type int')
 
@@ -296,6 +301,8 @@ class DataProcessing:
                 beginning, end = sample.split('-')
                 for num in np.arange(int(beginning[1:]), int(end) + 1):
                     sample_i = 'B' + str(num)
+                    if sample_i in self._targets_df['Sample number'].to_numpy():
+                        continue
                     rows_cpy = rows.copy()
                     rows_cpy.insert(0, 'Sample number', sample_i)
                     self._targets_df = rows.copy() if self._targets_df.empty else pd.concat((self._targets_df, rows_cpy), ignore_index=True)
@@ -564,7 +571,7 @@ def rpm_to_meter_per_minute(speed_rpm: float, wheel_diameter_m: float) -> float:
 
 if __name__ == '__main__':
     dp = DataProcessing()
-    dp.load_spinning_experiments_excel()
+    dp.load_spinning_experiments_excel(na_targets=False)
     dp.label_unnamed_samples()
     dp.label_duplicate_samples()
     dp.standardize_columns()
@@ -581,5 +588,7 @@ if __name__ == '__main__':
     dp.append_sequence_embeddings()
     dp.to_csv('spinning_data_embeddings.csv')
     dp.to_hdf('spinning_data_embeddings.hf5')
+    print(dp._df.shape)
     dp.group_samples()
     dp.to_excel('spinning_data_embeddings.xlsx')
+    
