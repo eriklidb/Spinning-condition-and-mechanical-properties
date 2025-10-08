@@ -16,7 +16,7 @@ class ModelTrainer():
     def __init__(self,
         n_outer_folds: int=3,
         n_inner_folds: int=5,
-        cv_type: Literal['kfold', 'groupkfold']='kfold',
+        cv_type: Literal['kfold', 'groupkfold']='groupkfold',
         shuffle: bool=True,
         random_state: int | np.random.RandomState | None=None) -> None:
         if cv_type == 'kfold':
