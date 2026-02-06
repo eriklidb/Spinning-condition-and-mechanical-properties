@@ -6,7 +6,7 @@ from typing import Literal
 class Dataset():
     def __init__(self, 
                  source: pd.DataFrame | str = 'spinning_data.csv',
-                 scaler: Literal['minmax', 'standard'] = 'minmax') -> None:
+                 scaler: Literal['minmax', 'standard', 'none'] = 'minmax') -> None:
         if isinstance(source, pd.DataFrame):
             self._df = source.reset_index(drop=True)
         else:
@@ -23,7 +23,9 @@ class Dataset():
         self._df.loc[:, self.categorical_columns] = self._df.loc[:, self.categorical_columns].astype('category')
         self._df.loc[:, self.target_columns] = self._df.loc[:, self.target_columns].astype(float)
 
-        if scaler == 'minmax':
+        if scaler == 'none':
+            return
+        elif scaler == 'minmax':
             self._scaler = MinMaxScaler()
         elif scaler == 'standard':
             self._scaler = StandardScaler()
