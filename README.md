@@ -26,11 +26,11 @@ If you want to play around with the code yourself, you can follow these steps on
 ```
 git clone https://github.com/eriklidb/Spinning-condition-and-mechanical-properties
 ```
-3. Create a virtual environment: 
+2. Create a virtual environment: 
 ```
 python -m venv spidro_env
 ```
-4. Activate it. On Linux/MacOS: 
+3. Activate it. On Linux/MacOS: 
 ```
 source spidro_env/bin/activate
 ``` 
@@ -38,12 +38,12 @@ On Windows
 ```
 spidro_env\Scripts\activate
 ```
-5. Install core dependencies: 
+4. Install core dependencies: 
 ```
 python -m pip install --upgrade pip 
 python -m pip install -r requirements.txt
 ```
-6. (Optional) installing ``torch`` and ``transformers`` will enable you to run the ``protein_sequences`` module and reproduce the PLM-derived embeddings:
+5. (Optional) installing ``torch`` and ``transformers`` will enable you to run the ``protein_sequences`` module and reproduce the PLM-derived embeddings:
 ```
 python -m pip install -r requirements-plm.txt
 ```
