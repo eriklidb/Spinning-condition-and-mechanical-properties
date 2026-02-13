@@ -7,9 +7,9 @@ The Spidrospin dataset containing the data for the artificial spider silk experi
 the requirenments file(s). The artificial spider data will be shared in the future if possible.
 
 ## Structure
-The code for the data processing and model training/evaluation can be found in src. 
-The generated figures can be found in figures. 
-The trained outer-fold models can be found in models.
+* The code for the data processing and model training/evaluation can be found in src. 
+* The generated figures can be found in figures. 
+* The trained outer-fold models can be found in models.
 
 ### Code structure
 * The ``data_processing`` module cleans the raw data found in multiple spreadsheets, makes it suitable for training, and saves it to another format (csv/hdf/xlsx). 
